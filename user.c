@@ -84,13 +84,33 @@ int main(int argc, char **argv){
 	int terminate = 0;//flip to 1 when time to terminate
 	int mem_ref = 0;
 	int page;//request page
+	int read;//0 for read, 1 for write
 	
 	while(terminate < 1){
 		//choose page to request
-		page = (rand() % 32);
+		page = (rand() % 3200);
+		page = 3200 / 1000;
+		read = (rand() % 2);
 		//request page
+		sbuf.mtype = 1;//message type 1
+		sbuf.mtext[0] = mypid;
+		sbuf.mtext[1] = page;
+		sbuf.mtext[2] = read; //0 for read, 1 for write
+		buf_length = sizeof(sbuf.mtext);
+		if(msgsnd(msqid, &sbuf, buf_length, IPC_NOWAIT) < 0){
+			printf("%d, %d\n", msqid, sbuf.mtype);
+			perror("time msgsend");
+			detachshared();
+			return 1;
+		}
+		//wait for response 
+		if(msgrcv(msqid, &rbuf, 0, mypid, 0) < 0){
+			//printf("message not received.\n");
+			//return 1;
+		}else{
+			mem_ref++;
+		}
 		
-		mem_ref++;
 		
 		if ((mem_ref % 1000) == 0){
 			if (rand() % 100 < 50){

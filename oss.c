@@ -281,7 +281,7 @@ int main(int argc, char **argv){
 	int currentsec, currentns, prevns = 0, prevsec = 0;
 	
 	//statistics
-	double num_mem_access = 0;//total num of memory accesses
+	long num_mem_access = 0;//total num of memory accesses
 	double num_page_fault = 0;//num page faults/per memory access
 	double mem_speed = 0;//used to find average memory access speed
 	
@@ -302,6 +302,28 @@ int main(int argc, char **argv){
 		signal(SIGINT, sighandler);
 		
 		errno = 0;
+		//check for page request message from child in message queue
+		if(msgrcv(msqid, &rbuf, sizeof(int [MSGSZ]), 1, MSG_NOERROR | IPC_NOWAIT) < 0){
+			if(errno != ENOMSG){
+				perror("msgrcv in oss");
+				//cleanup();
+				return 1;
+			}
+			
+		}else{
+			//TODO check for page in frame table
+			//TODO 
+			//send message to pid that page is loaded 
+			sbuf.mtype = rbuf.mtext[0];
+			if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0){
+				perror("msgsnd");
+				return 1;
+			}else{
+				num_mem_access++;
+			}
+		}
+		
+		errno = 0;
 		//check for termination message from child in message queue
 		if(msgrcv(msqid, &rbuf, sizeof(int [MSGSZ]), 2, MSG_NOERROR | IPC_NOWAIT) < 0){
 			if(errno != ENOMSG){
@@ -313,25 +335,13 @@ int main(int argc, char **argv){
 		}else{
 			printf("child %d terminated at %d : %d\n", rbuf.mtext[0], rbuf.mtext[1], rbuf.mtext[2]);
 		}
-			//printf("critical section token received\n"); 
 			clock[1] += rand() % 1000000;
 			if(clock[1] > 1000000000){
 				clock[0] += 1;
 				clock[1] -= 1000000000;
 			}
 		
-			/* //put critical section token back into message queue	
-			sbuf.mtype = 1;
-			//send message
-			if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0) {
-				printf("%d, %d, %d, %d\n", msqid, sbuf.mtype);
-				perror("msgsnd critical section token");
-				//cleanup();
-				return 1;
-			}else{
-				//printf("critical section token available\n");
-			}
-		}		 */
+			
 		//fork children
 		currentsec = clock[0];
 		currentns = clock[1];
@@ -375,6 +385,7 @@ int main(int argc, char **argv){
 		}
 	}
 	printf("%d total processes started\n", totalProcesses);
+	printf("%d total memory accesses\n", num_mem_access);
 	
 	cleanup();
 	return 0;
