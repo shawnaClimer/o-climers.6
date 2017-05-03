@@ -14,10 +14,19 @@
 #include <sys/msg.h>
 #include <errno.h>
 #include "constants.h"
+#include "queue.h"
 
 //for shared memory clock
 static int *shared;
 static int shmid;
+
+//shared memory page tables
+static page_table *paget;
+static int ptmid; 
+
+//shared memory frames
+static frame *frames;
+static int frmid;
 
 //for pids
 static pid_t *pidptr;
@@ -67,7 +76,7 @@ int deletequeue(){
 
 int detachshared(){
 	//detach from shared memory clock and resource descriptors
-	if((shmdt(shared) == -1) || (shmdt(block) == -1)){
+	if((shmdt(shared) == -1) || (shmdt(paget) == -1) || (shmdt(frames) == -1)){
 		perror("failed to detach from shared memory");
 		return -1;
 	}
@@ -76,7 +85,7 @@ int detachshared(){
 }
 int removeshared(){
 	//remove shared memory clock and resource descriptors
-	if((shmctl(shmid, IPC_RMID, NULL) == -1) || (shmctl(rdmid, IPC_RMID, NULL) == -1)){
+	if((shmctl(shmid, IPC_RMID, NULL) == -1) || (shmctl(ptmid, IPC_RMID, NULL) == -1) || (shmctl(frmid, IPC_RMID, NULL) == -1)){
 		perror("failed to delete shared memory");
 		return -1;
 	}
@@ -136,6 +145,9 @@ int main(int argc, char **argv){
 	int numSlaves = 10; 
 	if(sflag){//change numSlaves
 		numSlaves = atoi(x);
+		if (numSlaves > MAX){//hard limit on num processes
+			numSlaves = MAX;
+		}
 	}
 	
 	//time in seconds for master to terminate
@@ -182,12 +194,52 @@ int main(int argc, char **argv){
 		}
 		return 1;
 	}
-	//delete after detach
-	//shmctl(shmid, IPC_RMID, 0);
-
+	
 	clock = shared;
 	clock[0] = 0;//initialize "clock" to zero
 	clock[1] = 0;
+	
+	//create page tables in shared memory
+	key_t pagekey;
+	page_table *pageptr;
+	//create key
+	if((pagekey = ftok("oss.c", 5)) == -1){
+		perror("pagekey error");
+		return 1;
+	}
+	//get shared memory change to sizeof *page?
+	if((ptmid = shmget(pagekey, (sizeof(page_table) * MAX), IPC_CREAT | 0666)) == -1){
+		perror("failed to create page tables in shared memory");
+		return 1;
+	}
+	//attach to shared memory
+	if((paget = (page_table *)shmat(ptmid, NULL, 0)) == (void *)-1){
+		perror("failed to attach to page tables in memory");
+		return 1;
+	}
+		
+	pageptr = paget;
+	
+	//create frames in shared memory
+	key_t frkey;
+	frame *frameptr;
+	//create key
+	if ((frkey = ftok("oss.c", 9)) == -1){
+		perror("frkey error");
+		return 1;
+	}
+	//get shared memory for 256 frames
+	if((frmid = shmget(frkey, (sizeof(frame) * 256), IPC_CREAT | 0666)) == -1){
+		perror("failed to create frames in shared memory");
+		return 1;
+	}
+	//attach to shared memory
+	if ((frames = (frame *)shmat(frmid, NULL, 0)) == (void *)-1){
+		perror("failed to attach to frames in memory");
+		return 1;
+	}
+	
+	frameptr = frames;
 	
 	//create start time
 	struct timespec start, now;
@@ -226,9 +278,14 @@ int main(int argc, char **argv){
 	
 	//interval between forking children
 	int timetofork = rand() % 500000000;//500 milliseconds
-	int currentns, prevns, prevsec = 0;
+	int currentsec, currentns, prevns = 0, prevsec = 0;
 	
-	//put message type 1 (critical section token) into message queue
+	//statistics
+	double num_mem_access = 0;//total num of memory accesses
+	double num_page_fault = 0;//num page faults/per memory access
+	double mem_speed = 0;//used to find average memory access speed
+	
+	/* //put message type 1 (critical section token) into message queue
 	sbuf.mtype = 1;
 	//send message
 	if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0) {
@@ -238,15 +295,15 @@ int main(int argc, char **argv){
 		return 1;
 	}else{
 		//printf("critical section token available\n");
-	}
+	} */
 	
 	while(totalProcesses < 100 && clock[0] < 20 && (nowtime - starttime) < endTime){
 		//signal handler
 		signal(SIGINT, sighandler);
 		
 		errno = 0;
-		//check for critical section token in message queue
-		if(msgrcv(msqid, &rbuf, 0, 1, MSG_NOERROR | IPC_NOWAIT) < 0){
+		//check for termination message from child in message queue
+		if(msgrcv(msqid, &rbuf, sizeof(int [MSGSZ]), 2, MSG_NOERROR | IPC_NOWAIT) < 0){
 			if(errno != ENOMSG){
 				perror("msgrcv in oss");
 				//cleanup();
@@ -254,14 +311,16 @@ int main(int argc, char **argv){
 			}
 			
 		}else{
-			//printf("critical section token received\n");
+			printf("child %d terminated at %d : %d\n", rbuf.mtext[0], rbuf.mtext[1], rbuf.mtext[2]);
+		}
+			//printf("critical section token received\n"); 
 			clock[1] += rand() % 1000000;
 			if(clock[1] > 1000000000){
 				clock[0] += 1;
 				clock[1] -= 1000000000;
 			}
 		
-			//put critical section token back into message queue	
+			/* //put critical section token back into message queue	
 			sbuf.mtype = 1;
 			//send message
 			if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0) {
@@ -272,7 +331,7 @@ int main(int argc, char **argv){
 			}else{
 				//printf("critical section token available\n");
 			}
-		}		
+		}		 */
 		//fork children
 		currentsec = clock[0];
 		currentns = clock[1];
