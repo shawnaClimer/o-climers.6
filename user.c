@@ -88,8 +88,8 @@ int main(int argc, char **argv){
 	
 	while(terminate < 1){
 		//choose page to request
-		page = (rand() % 3200);
-		page = 3200 / 1000;
+		page = (rand() % 32);
+		//page = 3200 / 1000;
 		write = (rand() % 2);//1 for write, 0 for read
 		//request page
 		sbuf.mtype = 1;//message type 1
@@ -120,6 +120,7 @@ int main(int argc, char **argv){
 				sbuf.mtext[0] = mypid;
 				sbuf.mtext[1] = clock[0];
 				sbuf.mtext[2] = clock[1];
+				sbuf.mtext[3] = mem_ref;
 				buf_length = sizeof(sbuf.mtext);
 				if(msgsnd(msqid, &sbuf, buf_length, IPC_NOWAIT) < 0){
 					printf("%d, %d\n", msqid, sbuf.mtype);
@@ -130,7 +131,7 @@ int main(int argc, char **argv){
 			} 
 		}
 	}
-	printf("%d memory accesses\n", mem_ref);
+	//printf("%d memory accesses\n", mem_ref);
 			
 	//code for freeing shared memory
 	if(detachshared() == -1){

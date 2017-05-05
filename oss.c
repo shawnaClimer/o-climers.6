@@ -36,6 +36,10 @@ static int msqid;
 
 void sighandler(int sigid){
 	printf("Caught signal %d\n", sigid);
+	
+	//cleanup shared memory
+	cleanup();
+	
 	//send kill message to children
 	//access pids[] to kill each child
 	 int i;
@@ -45,19 +49,16 @@ void sighandler(int sigid){
 		}
 	} 
 	
-	//cleanup shared memory
-	cleanup();
-	
 	exit(sigid);
 }
 
 int cleanup(){
-	int i;
+	/* int i;
 	for ( i = 0; i < MAX; i++){
 		if (pidptr[i] != 1){
 			kill(pidptr[i], SIGQUIT);
 		}
-	}
+	} */
 	
 	detachshared();
 	removeshared();
@@ -103,7 +104,7 @@ int main(int argc, char **argv){
 	
 	char *filename, *x, *z;
 	
-	while((c = getopt(argc, argv, "hs:l:i:t:")) != -1)
+	while((c = getopt(argc, argv, "hvs:l:i:t:")) != -1)
 		switch (c) {
 			case 'h':
 				hflag = 1;
@@ -142,7 +143,7 @@ int main(int argc, char **argv){
 	}
 	puts(filename);
 	//number of slaves
-	int numSlaves = 10; 
+	int numSlaves = 18; 
 	if(sflag){//change numSlaves
 		numSlaves = atoi(x);
 		if (numSlaves > MAX){//hard limit on num processes
@@ -244,6 +245,7 @@ int main(int argc, char **argv){
 	int i;
 	for (i = 0; i < 256; i++){
 		frameptr[i].valid = 'F';
+		//printf("frame %d set to %d\n", i, frameptr[i].valid);
 	}
 	
 	//create start time
@@ -302,77 +304,245 @@ int main(int argc, char **argv){
 	} */
 	int page_exist = 0;//page was already in memory
 	int LRUqueue[13];//queue for LRU frames
+	initqueue(LRUqueue);//initialize queue
+	int num_free = 256;//free frames
+	int otime[2];//oldest timestamp
+	otime[0] = 20;//newest time possible
+	otime[1] = 1000000000;
+	int oframe = 0;//oldest frame
+	int oldest[13];//array to hold index of oldest frames
+	int j, m; //for looping through indices
+	for (m = 0; m < 13; m++){
+		oldest[m] = 300;//remove all feasible frame numbers (0-255)
+	}
+	int gotit = 0;//for unique oldest frames
+	int sec_status = 0;//print frame status every second
 	
 	while(totalProcesses < 100 && clock[0] < 20 && (nowtime - starttime) < endTime){
 		//signal handler
 		signal(SIGINT, sighandler);
+		
+		//show frames status evey second
+		if (clock[0] > sec_status){
+			sec_status = clock[0];
+			for (i = 0; i < 256; i++){
+				printf("%c", frameptr[i].valid);
+			}
+			puts("\n");
+		}
 		
 		errno = 0;
 		//check for page request message from child in message queue
 		if(msgrcv(msqid, &rbuf, sizeof(int [MSGSZ]), 1, MSG_NOERROR | IPC_NOWAIT) < 0){
 			if(errno != ENOMSG){
 				perror("msgrcv in oss");
-				//cleanup();
+				cleanup();
 				return 1;
 			}
 			
 		}else{
-			//check for page in frame table
-			for (i = 0; i < 256; i++){
-				if (frameptr[i].current_pid == rbuf.mtext[0]){
-					//check for page
-					if (frameptr[i].current_page == rbuf.mtext[1]){
-						frameptr[i].valid = 'V';//set to valid
-						frameptr[i].dirty = rbuf.mtext[2];//set 0 for read, 1 for write
-						page_exist = 1;//page was already in memory
-						break;
-					}
+			page_exist = 0;//reset for next memory request
+			while (page_exist == 0){
+				//check num of free frames
+				if (num_free < 27){//10% of 256
+					//printf("%d free frames\n", num_free);
+					//flip oldest frames to 'U' or 'F' if already 'U'
+					for (j = 0; j < 13; j++){//5% of 256
+						//puts("1");
+						for (i = 0; i < 256; i++){//find oldest
+							//puts("2");
+							if (frameptr[i].valid != 'F'){
+								if (frameptr[i].timestamp[0] < otime[0]){
+									for (m = 0; m < 13; m++){
+										if (oldest[m] == i){
+											//already in oldest array
+											gotit = 1;
+											//puts("3");
+										}
+									}
+									if (gotit == 0){//not in oldest array
+										oframe = i;
+										otime[0] = frameptr[i].timestamp[0];
+										otime[1] = frameptr[i].timestamp[1];
+										//puts("4");
+									}
+									
+								}else if (frameptr[i].timestamp[0] == otime[0]){
+									if (frameptr[i].timestamp[1] < otime[1]){
+										for (m = 0; m < 13; m++){
+											if (oldest[m] == i){
+												//already in oldest array
+												gotit = 1;
+												//puts("5");
+											}
+										}
+										if (gotit == 0){//not in oldest array
+											oframe = i;
+											otime[0] = frameptr[i].timestamp[0];
+											otime[1] = frameptr[i].timestamp[1];
+											//puts("6");
+										}
 										
-				}
-			}
-			//if not in memory, try to load
-			if (page_exist == 0){
-				//look for a free frame
+									}
+								}
+							}//end if not free
+						}//end loop through frames
+						oldest[j] = oframe;//put oldest frame in oldest array
+						//printf("oldest frame is %d\n", oframe);
+						//flip oldest valid
+						if (frameptr[oframe].valid == 'V'){
+							//printf("flipped a V to a U\n");
+							frameptr[oframe].valid = 'U';
+						}else{
+							//printf("freed up a frame\n");
+							num_free++;
+							frameptr[oframe].current_pid = 0;//reset
+							frameptr[oframe].valid = 'F';
+							frameptr[oframe].timestamp[0] = clock[0];//no longer old frame
+						}
+						gotit = 0;
+						otime[0] = 20;
+						otime[1] = 1000000000;
+					}//end loop for 13 oldest frames
+					//clear out oldest array, reset gotit, otime
+					//gotit = 0;
+					//otime[0] = 20;//newest possible time
+					for (m = 0; m < 13; m++){
+						oldest[m] = 300;//remove all feasible frame numbers (0-255)
+					}
+				}//end of free frames < 10%
+				//check for page in frame table
 				for (i = 0; i < 256; i++){
-					if (frameptr[i].valid == 'F'){
-						frameptr[i].current_pid = rbuf.mtext[0];
-						frameptr[i].current_page = rbuf.mtext[1];
-						frameptr[i].valid = 'V';
-						frameptr[i].dirty = rbuf.mtext[2];
-						page_exist = 1;//page is loaded in memory
-						break;
+					if (frameptr[i].current_pid == rbuf.mtext[0]){//pid has a frame
+						//check for page
+						if (frameptr[i].current_page == rbuf.mtext[1]){//page is here
+							frameptr[i].valid = 'V';//set to valid
+							frameptr[i].dirty = rbuf.mtext[2];//set 0 for read, 1 for write
+							frameptr[i].timestamp[0] = clock[0];
+							frameptr[i].timestamp[1] = clock[1];
+							page_exist = 1;//page was already in memory
+							clock[1] += 10;
+							if(clock[1] > 1000000000){
+								clock[0] += 1;
+								clock[1] -= 1000000000;
+							}
+							//if verbose logging
+							if(vflag == 1 && loglength < 1000){//log file is under 1000 lines
+								FILE *logfile;
+								logfile = fopen(filename, "a");
+								if(logfile == NULL){
+									perror("Log file failed to open");
+									cleanup();
+									return 1;
+								}
+								fprintf(logfile, "pid %d requested page %d was already in frame %d\n", rbuf.mtext[0], rbuf.mtext[1], i);
+								fclose(logfile);
+								loglength++;
+							}
+							//printf("found page in memory\n");
+							break;
+						}
+											
 					}
 				}
-			}
-			//if not in memory, and no free frames, replace oldest 'U' frame
+				//if not in memory, try to load
+				if (page_exist == 0){
+					//look for a free frame
+					for (i = 0; i < 256; i++){
+						if (frameptr[i].valid == 'F'){
+							frameptr[i].current_pid = rbuf.mtext[0];
+							frameptr[i].current_page = rbuf.mtext[1];
+							frameptr[i].valid = 'V';
+							frameptr[i].dirty = rbuf.mtext[2];
+							frameptr[i].timestamp[0] = clock[0];
+							frameptr[i].timestamp[1] = clock[1];
+							page_exist = 1;//page is loaded in memory
+							num_free--;//one less free frame
+							//printf("loaded into free frame\n");
+							clock[1] += 15000000;
+							if(clock[1] > 1000000000){
+								clock[0] += 1;
+								clock[1] -= 1000000000;
+							}
+							//if verbose logging
+							if(vflag == 1 && loglength < 1000){//log file is under 1000 lines
+								FILE *logfile;
+								logfile = fopen(filename, "a");
+								if(logfile == NULL){
+									perror("Log file failed to open");
+									cleanup();
+									return 1;
+								}
+								fprintf(logfile, "pid %d requested page %d, is now loaded in frame %d\n", rbuf.mtext[0], rbuf.mtext[1], i);
+								fclose(logfile);
+								loglength++;
+							}
+							break;
+						}
+					}
+				}
+			}//end of while page_exist == 0
+			
+			/* //if not in memory, and no free frames, replace oldest 'U' frame
 			if (page_exist == 0){
-				
+				i = popqueue(LRUqueue);//get oldest 'U' frame
+				frameptr[i].current_pid = rbuf.mtext[0];
+				frameptr[i].current_page = rbuf.mtext[1];
+				frameptr[i].valid = 'V';
+				frameptr[i].dirty = rbuf.mtext[2];
+				frameptr[i].timestamp[0] = clock[0];
+				frameptr[i].timestamp[1] = clock[1];
+				page_exist = 1;//page is loaded in memory
+			} */
+			
+			if (page_exist == 1){
+				//send message to pid that page is loaded 
+				sbuf.mtype = rbuf.mtext[0];
+				if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0){
+					perror("msgsnd");
+					cleanup();
+					return 1;
+				}else{
+					num_mem_access++;
+				}
 			}
 			
-			//send message to pid that page is loaded 
-			sbuf.mtype = rbuf.mtext[0];
-			if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0){
-				perror("msgsnd");
-				return 1;
-			}else{
-				num_mem_access++;
-			}
-			page_exist = 0;//reset for next memory request
-		}
+			
+		}//end of receive message from user for memory access
 		
 		errno = 0;
 		//check for termination message from child in message queue
 		if(msgrcv(msqid, &rbuf, sizeof(int [MSGSZ]), 2, MSG_NOERROR | IPC_NOWAIT) < 0){
 			if(errno != ENOMSG){
 				perror("msgrcv in oss");
-				//cleanup();
+				cleanup();
 				return 1;
 			}
 			
 		}else{
 			printf("child %d terminated at %d : %d\n", rbuf.mtext[0], rbuf.mtext[1], rbuf.mtext[2]);
+			pid = wait(&status);//make sure child terminated
+			for (i = 0; i < numSlaves; i++){
+				if (pids[i] == pid){
+					pids[i] = 1;
+					currentnum--;
+					break;
+				}
+			}
+			if(loglength < 1000){//log file is under 1000 lines
+				FILE *logfile;
+				logfile = fopen(filename, "a");
+				if(logfile == NULL){
+					perror("Log file failed to open");
+					cleanup();
+					return 1;
+				}
+				fprintf(logfile, "child %d terminated at %d : %d time with %d memory accesses\n", pid, clock[0], clock[1], rbuf.mtext[3]);
+				fclose(logfile);
+				loglength++;
+			}
 		}
-			clock[1] += rand() % 1000000;
+			clock[1] += rand() % 10000;
 			if(clock[1] > 1000000000){
 				clock[0] += 1;
 				clock[1] -= 1000000000;
@@ -395,13 +565,13 @@ int main(int argc, char **argv){
 			pids[i] = fork();
 			if(pids[i] == -1){
 				perror("Failed to fork");
-				//cleanup();
+				cleanup();
 				return 1;
 			}
 			if(pids[i] == 0){
 				execl("user", "user", NULL);
 				perror("Child failed to exec user");
-				//cleanup();
+				cleanup();
 				return 1;
 			}
 			totalProcesses++;//add to total processes	
@@ -415,16 +585,23 @@ int main(int argc, char **argv){
 			nowtime = now.tv_sec;
 		}
 	}//end of while loop
-	//terminate any leftover children
-	for (i = 0; i < numSlaves; i++){
-		if (pids[i] != 1){
-			kill(pids[i], SIGQUIT);
-		}
-	}
 	printf("%d total processes started\n", totalProcesses);
 	printf("%d total memory accesses\n", num_mem_access);
 	
 	cleanup();
+	
+	//terminate any leftover children
+	while (currentnum > 0){
+		for (i = 0; i < numSlaves; i++){
+			if (pids[i] != 1){
+				kill(pids[i], SIGQUIT);
+				currentnum--;
+				break;
+			}
+		}
+	}
+	
+	
 	return 0;
 }
 	

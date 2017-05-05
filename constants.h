@@ -1,7 +1,7 @@
 //max num processes
 #define MAX		18
 //for message queue
-#define MSGSZ	3
+#define MSGSZ	4
 typedef struct msgbuf {
 	long mtype;
 	int mtext[MSGSZ];
@@ -18,4 +18,5 @@ typedef struct frametable {
 	int current_page;//page number
 	char valid;//'F' free, 'V' valid, 'U' occupied
 	int dirty;//0 was a read, 1 was a write
+	int timestamp[2];//time stamp
 } frame;
