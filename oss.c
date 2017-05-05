@@ -240,6 +240,11 @@ int main(int argc, char **argv){
 	}
 	
 	frameptr = frames;
+	//initialize frames
+	int i;
+	for (i = 0; i < 256; i++){
+		frameptr[i].valid = 'F';
+	}
 	
 	//create start time
 	struct timespec start, now;
@@ -261,7 +266,6 @@ int main(int argc, char **argv){
 	pidptr = pids;
 	//initialize pids[]
 	//printf("initializing pids[]\n");
-	int i;
 	for(i = 0; i < MAX; i++){
 		pids[i] = 1;
 	}
@@ -296,6 +300,8 @@ int main(int argc, char **argv){
 	}else{
 		//printf("critical section token available\n");
 	} */
+	int page_exist = 0;//page was already in memory
+	int LRUqueue[13];//queue for LRU frames
 	
 	while(totalProcesses < 100 && clock[0] < 20 && (nowtime - starttime) < endTime){
 		//signal handler
@@ -311,8 +317,38 @@ int main(int argc, char **argv){
 			}
 			
 		}else{
-			//TODO check for page in frame table
-			//TODO 
+			//check for page in frame table
+			for (i = 0; i < 256; i++){
+				if (frameptr[i].current_pid == rbuf.mtext[0]){
+					//check for page
+					if (frameptr[i].current_page == rbuf.mtext[1]){
+						frameptr[i].valid = 'V';//set to valid
+						frameptr[i].dirty = rbuf.mtext[2];//set 0 for read, 1 for write
+						page_exist = 1;//page was already in memory
+						break;
+					}
+										
+				}
+			}
+			//if not in memory, try to load
+			if (page_exist == 0){
+				//look for a free frame
+				for (i = 0; i < 256; i++){
+					if (frameptr[i].valid == 'F'){
+						frameptr[i].current_pid = rbuf.mtext[0];
+						frameptr[i].current_page = rbuf.mtext[1];
+						frameptr[i].valid = 'V';
+						frameptr[i].dirty = rbuf.mtext[2];
+						page_exist = 1;//page is loaded in memory
+						break;
+					}
+				}
+			}
+			//if not in memory, and no free frames, replace oldest 'U' frame
+			if (page_exist == 0){
+				
+			}
+			
 			//send message to pid that page is loaded 
 			sbuf.mtype = rbuf.mtext[0];
 			if(msgsnd(msqid, &sbuf, 0, IPC_NOWAIT) < 0){
@@ -321,6 +357,7 @@ int main(int argc, char **argv){
 			}else{
 				num_mem_access++;
 			}
+			page_exist = 0;//reset for next memory request
 		}
 		
 		errno = 0;

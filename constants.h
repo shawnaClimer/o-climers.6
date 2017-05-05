@@ -14,7 +14,8 @@ typedef struct pagetable {
 
 //for frame
 typedef struct frametable {
-	int current_page[MAX][32];//pid and page number
-	int valid;
-	int dirty;
+	int current_pid;//pid
+	int current_page;//page number
+	char valid;//'F' free, 'V' valid, 'U' occupied
+	int dirty;//0 was a read, 1 was a write
 } frame;
