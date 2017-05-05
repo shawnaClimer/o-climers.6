@@ -464,6 +464,7 @@ int main(int argc, char **argv){
 								clock[0] += 1;
 								clock[1] -= 1000000000;
 							}
+							num_page_fault++;
 							//if verbose logging
 							if(vflag == 1 && loglength < 1000){//log file is under 1000 lines
 								FILE *logfile;
@@ -587,6 +588,9 @@ int main(int argc, char **argv){
 	}//end of while loop
 	printf("%d total processes started\n", totalProcesses);
 	printf("%d total memory accesses\n", num_mem_access);
+	printf("%f memory accesses per second (logical clock in oss)\n", (float)(num_mem_access / 20));
+	printf("%f average number of page faults per memory access\n", (float)(num_page_fault/num_mem_access));
+	printf("%f ns average memory access speed\n", (float)((((num_mem_access - num_page_fault) * 10) + (num_page_fault * 1000000)) / num_mem_access));
 	
 	cleanup();
 	

@@ -113,7 +113,7 @@ int main(int argc, char **argv){
 		
 		
 		if ((mem_ref % 1000) == 0){
-			if (rand() % 100 < 50){
+			if (rand() % 100 < 70){
 				terminate = 1;//time to terminate
 				//send message to oss
 				sbuf.mtype = 2;//message type 2 
